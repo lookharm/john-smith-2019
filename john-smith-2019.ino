@@ -1,4 +1,6 @@
 #include <QueueArray.h>
+#include <Adafruit_NeoPixel.h>
+#include "EEPROM.h"
 #include "config.h"
 #include "Oled.h"
 #include "Motor.h"
@@ -14,6 +16,9 @@
 
 #define ROW 16
 #define COL 16
+
+#define MAX_MODE 12
+
 /***
    TODO
    -acc sigmoid
@@ -21,73 +26,79 @@
    -no switch debounce
    -no level shifter
    -no free wheeling diode
+   -SD card, ship EEPROM
 */
 
 
 /***
- * TODO FAST
- * -The God of Track Forward (1 block)
- * -Trackforward Check front wall to stop.
- * -Turn Left, Turn Right
- */
+   TODO FAST
+   -The God of Track Forward (1 block)
+   -Trackforward Check front wall to stop.
+   -Turn Left, Turn Right
+*/
 
+Adafruit_NeoPixel pixels(3, 23, NEO_GRB + NEO_KHZ800);
 Oled oled;
 Motor motorR;
 Motor motorL;
 
-short tLeftSide = 1500;
-short tLeftFront = 3150;
-short tRightSide = 1800;
-short tRightFront = 3050;
+//Sensors
+String sName[4] = {"LS", "LF", "RF", "RS"};
+int found[4] = {};
+int64_t fSum[4] = {};
+int16_t fCount[4] = {};
+int notFound[4] = {};
+int64_t nSum[4] = {};
+int16_t nCount = 0;
+int tLeftSide = 0;
+int tLeftFront = 0;
+int tRightFront = 0;
+int tRightSide = 0;
 
-byte step1Block = 215;// 7.7 V
-
-byte _mode = 0;
-
-byte verticalWalls[ROW][COL + 1];
-byte horizontalWalls[ROW + 1][COL];
-byte startY = 5;//15
-byte startX = 0;//0
-byte endPoints[4][2] = {{3, 2}, {3, 3}, {4, 2}, {4, 3}}; //{7,8},{7,9},{8,8},{8,9}
+uint8_t step1Block = 215;// 7.7 V
+uint8_t _mode = 0;
+uint8_t verticalWalls[ROW][COL + 1];
+uint8_t horizontalWalls[ROW + 1][COL];
+uint8_t startY = 5;//15
+uint8_t startX = 0;//0
+uint8_t endPoints[4][2] = {{3, 2}, {3, 3}, {4, 2}, {4, 3}}; //{7,8},{7,9},{8,8},{8,9}
 
 struct Block {
-  byte y;
-  byte x;
-  byte value;
-  byte count;
+  uint8_t y;
+  uint8_t x;
+  uint8_t value;
+  uint8_t count;
   bool flag;
   bool mark;
 };
 Block blocks[ROW][COL];
 
 //current position of robot
-byte px = 5;
-byte py = 0;
+uint8_t px = 5;
+uint8_t py = 0;
 char direction = 'N';
-byte spd = 80;
 
 void setup() {
+  Serial.begin(115200);
+
+  EEPROM.begin(EEPROM_SIZE);
+  pixels.begin();
+  pixels.clear();
   oled.init();
   motorR.init(MOTOR_R_INA, MOTOR_R_INB, MOTOR_R_OUTA, MOTOR_R_OUTB, MOTOR_R_CA, MOTOR_R_CB);
   motorL.init(MOTOR_L_INA, MOTOR_L_INB, MOTOR_L_OUTA, MOTOR_L_OUTB, MOTOR_L_CA, MOTOR_L_CB);
-
-  Serial.begin(115200);
-  Serial.println("Start");
-  delay(1000);
-
   motorR.setCount(0);
   motorL.setCount(0);
-  pinMode(LED_IR, OUTPUT);
 
+  pinMode(LED_IR, OUTPUT);
   pinMode(SENSOR_1, INPUT);
   pinMode(SENSOR_2, INPUT);
   pinMode(SENSOR_3, INPUT);
   pinMode(SENSOR_4, INPUT);
-
   pinMode(SW_1, INPUT);
   pinMode(SW_2, INPUT);
 
-  LED_ON;
+  readFlashMem();
 
   oled.drawString("John Smith");
   delay(1000);
@@ -103,7 +114,7 @@ void loop() {
       //Wait until release switch.
       while (SW1_PUSHED);
       _mode++;
-      _mode %= 8;
+      _mode %= MAX_MODE;
       oled.drawString("Mode " + String(_mode));
     }
   }
@@ -114,46 +125,112 @@ void loop() {
     if (SW2_PUSHED) {
       //Wait until release switch.
       while (SW1_PUSHED);
-      //mode
-      Serial.println(_mode);
       if (_mode == 0) {
-        char d[5] = "NESW";
-        byte c = 0;
+        delay(1000);
+        LED_ON;
         while (true) {
-          if (SW1_PUSHED) {
+          if (SW2_PUSHED) {
             delayMicroseconds(15);
-            while (SW1_PUSHED);
-            if (SW1_PUSHED) {
-              c++;
-              direction = d[c % 4];
+            if (SW2_PUSHED) {
+              while (SW2_PUSHED);
+              oled.drawString("Mode 0");
+              break;
             }
           }
-          oled.drawString("D: " + String(direction) + "\nState: " + String(getState()));
+          oled.drawString("State: " + String(getState()));
         }
+        LED_OFF;
       }
       else if (_mode == 1) {
-        delay(200);
+        delay(1000);
+        LED_ON;
         while (true) {
-          oled.drawString(String(SENSOR_LEFT_SIDE) + "\n" + String(SENSOR_LEFT_FRONT) + "\n" + String(SENSOR_RIGHT_SIDE) + "\n" + String(SENSOR_RIGHT_FRONT));
+          if (SW2_PUSHED) {
+            delayMicroseconds(15);
+            if (SW2_PUSHED) {
+              while (SW2_PUSHED);
+              break;
+            }
+          }
+          oled.drawString("LS: " + String(SENSOR_LEFT_SIDE) + "\n" + "LF: " + String(SENSOR_LEFT_FRONT) + "\n" + "RF: " + String(SENSOR_RIGHT_FRONT) + "\n" + "RS: " + String(SENSOR_RIGHT_SIDE) );
+        }
+        LED_OFF;
+      }
+      else if (_mode == 2) {
+        oled.drawString("calibrate\nsensors");
+        delay(1000);
+        LED_ON;
+        int i = 0;
+        short sens[4] = {};
+        while (true) {
+          if (i < 5) {
+            sens[0] = SENSOR_LEFT_SIDE;
+            sens[1] = SENSOR_LEFT_FRONT;
+            sens[2] = SENSOR_RIGHT_FRONT;
+            sens[3] = SENSOR_RIGHT_SIDE;
+          }
+          else {
+            oled.drawString("saving...");
+            for (int j = 0; j < 4; j++) {
+              if (fCount[j] == 0) {
+                found[j] = sens[j];
+              }
+              else {
+                found[j] = fSum[j] / fCount[j];
+              }
+              if (nCount == 0) {
+                notFound[j] = sens[j];
+              }
+              else {
+                notFound[j] = nSum[j] / nCount;
+              }
+            }
+
+            sensorCalThreshold(50, 50);
+
+            oled.drawString("done");
+            delay(1000);
+            oled.drawString("fLS: " + String(found[0]) + "\n" + "fLF: " + String(found[1]) + "\n" + "fRF: " + String(found[2]) + "\n" + "tRS: " + String(found[3]));
+            delay(1500);
+            oled.drawString("nLS: " + String(notFound[0]) + "\n" + "nLF: " + String(notFound[1]) + "\n" + "nRF: " + String(notFound[2]) + "\n" + "nRS: " + String(notFound[3]));
+            delay(1500);
+            oled.drawString("tLS: " + String(tLeftSide) + "\n" + "tLF: " + String(tLeftFront) + "\n" + "tRF: " + String(tRightFront) + "\n" + "tRS: " + String(tRightSide));
+            delay(1500);
+            oled.drawString("Mode 2");
+            break;
+          }
+
           if (SW1_PUSHED) {
             delayMicroseconds(15);
-            while (SW1_PUSHED);
-            break;
+            if (SW1_PUSHED) {
+              while (SW1_PUSHED);
+              if (i < 4) {
+                fCount[i]++;
+                fSum[i] += sens[i];
+              }
+              else if (i == 4) {
+                nCount++;
+                for (int j = 0; j < 4; j++) {
+                  nSum[j] += sens[j];
+                }
+              }
+            }
           }
           if (SW2_PUSHED) {
             delayMicroseconds(15);
-            while (SW2_PUSHED);
-            sensorSolving();
-            oled.drawString("OK!");
-            delay(1000);
-            oled.drawString("Mode 1");
-            break;
+            if (SW2_PUSHED) {
+              while (SW2_PUSHED);
+              i++;
+            }
+          }
+          if (i < 4) {
+            oled.drawString("f" + sName[i] + ": " + String(sens[i]) + "\nc: " + fCount[i]);
+          }
+          else if (i == 4) {
+            oled.drawString("nLS: " + String(sens[0]) + "\n" + "nLF: " + String(sens[1]) + "\n" + "nRF: " + String(sens[2]) + "\n" + "nRS: " + String(sens[3]) + "\n" + "c: " + String(nCount), 1);
           }
         }
-      }
-      else if (_mode == 2) {
-        delay(1000);
-        turnRight();
+        LED_OFF;
       }
       else if (_mode == 3) {
         delay(1000);
@@ -165,7 +242,32 @@ void loop() {
       }
       else if (_mode == 5) {
         delay(1000);
-        trackForward(step1Block + step1Block * (5/100) );
+        LED_ON;
+        trackForward();
+        LED_OFF;
+      }
+      else if (_mode == 6) {
+        delay(1000);
+        turnRightForward();
+      }
+      else if (_mode == 7) {
+        delay(1000);
+        turnLeftForward();
+      }
+      else if (_mode == 8) {
+        delay(1000);
+        turnRightForward();
+        turnLeftForward();
+        turnRightForward();
+        turnLeftForward();
+      }
+      else if (_mode == 9) {
+        delay(1000);
+        trackFrontWallForward();
+      }
+      else if (_mode == 10) {
+        delay(1000);
+        turnAround();
       }
     }
   }
@@ -185,35 +287,88 @@ void sensorSolving() {
     lf += SENSOR_LEFT_FRONT;
     rf += SENSOR_RIGHT_FRONT;
     rs += SENSOR_RIGHT_SIDE;
-    //    leftSide[i] = SENSOR_LEFT_SIDE;
-    //    leftFront[i] = SENSOR_LEFT_FRONT;
-    //    rightFront[i] = SENSOR_RIGHT_FRONT;
-    //    rightFront[i] = SENSOR_RIGHT_SIDE;
     delay(10);
   }
   short tLeftSide = ls / 10;
   short tLeftFront = lf / 10;
   short tRightSide = rs / 10;
   short tRightFront = rf / 10;
+}
 
+void readFlashMem() {
+  for (int i = 0; i < 4; i++) {
+    notFound[i] = EEPROM_read_int(NOTFOUND_ADD + (i * 4));
+    found[i] = EEPROM_read_int(FOUND_ADD + (i * 4));
+  }
+  tLeftSide = EEPROM_read_int(THRESHOLD_ADD);
+  tLeftFront = EEPROM_read_int(THRESHOLD_ADD + (1 * 4));
+  tRightFront = EEPROM_read_int(THRESHOLD_ADD + (2 * 4));
+  tRightSide = EEPROM_read_int(THRESHOLD_ADD + (3 * 4));
+}
+
+void EEPROM_write_int(int _addr, int _data) {
+  EEPROM.write(_addr + 0 , (_data >> 0) & 0x000000FF);
+  EEPROM.write(_addr + 1 , (_data >> 8) & 0x000000FF);
+  EEPROM.write(_addr + 2 , (_data >> 16) & 0x000000FF);
+  EEPROM.write(_addr + 3 , (_data >> 24) & 0x000000FF);
+  EEPROM.commit();
+}
+
+int EEPROM_read_int(int _addr) {
+  int _data = 0x00000000;
+  _data = (EEPROM.read(_addr + 0) << 0) | (EEPROM.read(_addr + 1) << 8) | (EEPROM.read(_addr + 2) << 16) | (EEPROM.read(_addr + 3) << 24);
+  Serial.println(_data);
+  return _data;
+}
+
+void sensorCalThreshold(float weightFound, float weightNotFound) {
+  tLeftSide = (float(weightFound / 100) * found[0]) + (float(weightNotFound / 100) * notFound[0]);
+  tLeftFront = (float(weightFound / 100) * found[1]) + (float(weightNotFound / 100) * notFound[1]);
+  tRightFront = (float(weightFound / 100) * found[2]) + (float(weightNotFound / 100) * notFound[2]);
+  tRightSide = (float(weightFound / 100) * found[3]) + (float(weightNotFound / 100) * notFound[3]);
+
+  EEPROM_write_int(NOTFOUND_ADD , notFound[0]);
+  EEPROM_write_int(NOTFOUND_ADD + (4 * 1), notFound[1]);
+  EEPROM_write_int(NOTFOUND_ADD + (4 * 2), notFound[2]);
+  EEPROM_write_int(NOTFOUND_ADD + (4 * 3), notFound[3]);
+
+  EEPROM_write_int(FOUND_ADD, found[0]);
+  EEPROM_write_int(FOUND_ADD + (4 * 1), found[1]);
+  EEPROM_write_int(FOUND_ADD + (4 * 2), found[2]);
+  EEPROM_write_int(FOUND_ADD + (4 * 3), found[3]);
+
+  EEPROM_write_int(THRESHOLD_ADD, tLeftSide);
+  EEPROM_write_int(THRESHOLD_ADD + (4 * 1), tLeftFront);
+  EEPROM_write_int(THRESHOLD_ADD + (4 * 2), tRightFront);
+  EEPROM_write_int(THRESHOLD_ADD + (4 * 3), tRightSide);
+}
+
+//Forward 1 block.
+void trackForward() {
+  trackForward(step1Block + step1Block * (20 / 100));
 }
 
 void trackForward(int stepCount) {
-  byte spdLeft = 60;
-  byte spdRight = 60;
+  uint8_t spdLeft = 60;
+  uint8_t spdRight = 60;
   motorL.setCount(0);
   motorR.setCount(0);
   motorL.forward(spdLeft);
   motorR.forward(spdRight);
 
   while (motorL.getCount() < stepCount && motorR.getCount() < stepCount) {
-    if (SENSOR_LEFT_SIDE < tLeftSide - 100 &&  SENSOR_LEFT_SIDE < 3000) {
+    //    if (SENSOR_LEFT_FRONT < tLeftFront - 100 && SENSOR_RIGHT_FRONT < tRightFront - 100) {
+    //      break;
+    //    }
+    if (SENSOR_LEFT_SIDE < found[0] && SENSOR_LEFT_SIDE < notFound[0] - (notFound[0] * (10 / 100))) {
       spdLeft = 60;
       spdRight = 60 - 10;
+      oled.drawString("left");
     }
-    else if (SENSOR_RIGHT_SIDE < tRightSide - 100 && SENSOR_RIGHT_SIDE < 3000) {
+    else if (SENSOR_RIGHT_SIDE < found[3] && SENSOR_RIGHT_SIDE < notFound[3] - (notFound[3] * (10 / 100))) {
       spdLeft = 60 - 10;
       spdRight = 60;
+      oled.drawString("right");
     }
     else {
       spdLeft = 60;
@@ -237,13 +392,34 @@ void trackForward(int stepCount) {
   motorR.stop();
 }
 
-void forward() {
+void trackFrontWallForward() {
+  oled.drawString("t f wall");
+  while (SENSOR_LEFT_FRONT > tLeftFront - 100 && SENSOR_RIGHT_FRONT - 100 > tRightFront) {
+    oled.drawString("wall");
+    //    forward(5);
+  }
+}
+
+void turnRightForward() {
+  forward(50);
+  turnRight();
+  trackFrontWallForward();
+}
+
+void turnLeftForward() {
+  forward(50);
+  turnLeft();
+  trackFrontWallForward();
+}
+
+void forward(int stepCount) {
+  uint8_t spd = 60;
   motorL.setCount(0);
   motorR.setCount(0);
   motorL.forward(spd);
   motorR.forward(spd);
 
-  while (motorL.getCount() < step1Block && motorR.getCount() < step1Block) {
+  while (motorL.getCount() < stepCount && motorR.getCount() < stepCount) {
 
     if (motorL.getCount() > motorR.getCount()) {
       motorL.stop();
@@ -264,7 +440,7 @@ void forward() {
 
 void turnRight() {
   short m = 80;
-  byte spd = 40;
+  uint8_t spd = 40;
   motorL.setCount(0);
   motorR.setCount(0);
   motorL.forward(spd);
@@ -290,7 +466,7 @@ void turnRight() {
 
 void turnLeft() {
   short m = 80;
-  byte spd = 40;
+  uint8_t spd = 40;
   motorL.setCount(0);
   motorR.setCount(0);
   motorL.backward(spd);
@@ -312,6 +488,12 @@ void turnLeft() {
   }
   motorL.stop();
   motorR.stop();
+}
+
+void turnAround() {
+  forward(50);
+  turnRight();
+  turnRight();
 }
 
 void mapping() {
@@ -379,8 +561,8 @@ void floodFill() {
   }
 }
 
-byte getState() {
-  byte state = 0;
+uint8_t getState() {
+  uint8_t state = 0;
   switch (direction) {
     case 'N':
       if (SENSOR_LEFT_SIDE < tLeftSide) {
@@ -443,7 +625,7 @@ byte getState() {
   return state;
 }
 
-void chooseBlock(bool sf[], Block *left, Block *front, Block *right) {
+void chooseBlock(bool sf[], Block * left, Block * front, Block * right) {
   //sf = (left, front, right)
   //b[][0] = y
   //b[][1] = x
@@ -506,7 +688,7 @@ void decistionFindTarget() {
     over = true;
   }
 
-  byte state = getState();
+  uint8_t state = getState();
 
   //  0 3-Way
   bool sf[3] = {true, true, true};
@@ -518,25 +700,25 @@ void decistionFindTarget() {
     chooseBlock(sf, &left, &front, &right);
     //front
     if (front.flag == false && front.mark == false)
-      forward();
+      trackForward();
     //right
     else if (right.flag == false && right.mark == false)
-      turnRight();
+      turnRightForward();
     //left
     else if (left.flag == false && left.mark == false)
-      turnLeft();
+      turnLeftForward();
     else if (over && front.count <= right.count && front.count <= left.count)
-      forward();
+      trackForward();
     else if (over && right.count <= front.count && right.count <= left.count)
-      turnRight();
+      turnRightForward();
     else if (over && left.count <= front.count && left.count <= right.count)
-      turnLeft();
+      turnLeftForward();
     else if (front.value <= right.value && front.value <= left.value)
-      forward();
+      trackForward();
     else if (right.value <= front.value && right.value <= left.value)
-      turnRight();
+      turnRightForward();
     else
-      turnLeft();
+      turnLeftForward();
   }
   //1 2-Way
   else if (state == 1) {
@@ -545,17 +727,17 @@ void decistionFindTarget() {
     chooseBlock(sf, &left, &front, &right);
 
     if (front.flag == false && front.mark == false)
-      forward();
+      trackForward();
     else if (right.flag == false && right.mark == false)
-      turnRight();
+      turnRightForward();
     else if (over && front.count <= right.count)
-      forward();
+      trackForward();
     else if (over && right.count <= front.count)
-      turnRight();
+      turnRightForward();
     else if (front.value <= right.value)
-      forward();
+      trackForward();
     else
-      turnRight();
+      turnRightForward();
   }
   //2 2-Way
   else if (state == 2) {
@@ -583,34 +765,33 @@ void decistionFindTarget() {
     chooseBlock(sf, &left, &front, &right);
 
     if (front.flag == false && front.mark == false)
-      forward();
+      trackForward();
     else if (left.flag == false && left.mark == false)
-      turnLeft();
+      turnLeftForward();
     else if (over && front.count <= left.count)
-      forward();
+      trackForward();
     else if (over && left.count <= front.count)
-      turnLeft();
+      turnLeftForward();
     else if (front.value <= left.value)
-      forward();
+      trackForward();
     else
-      turnLeft();
+      turnLeftForward();
   }
   //3 1-Way
   else if (state == 3) {
-    turnRight();
+    turnRightForward();
   }
   //5 1-Way
   else if (state == 5) {
-    forward();
+    trackForward();
   }
   //6 1-Way
   else if (state == 6) {
-    turnLeft();
+    turnLeftForward();
   }
   //7 0-Way
   else if (state == 7) {
     blocks[py][px].mark = true;
-    turnRight();
-    turnRight();
+    turnAround();
   }
 }

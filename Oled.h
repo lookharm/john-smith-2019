@@ -44,6 +44,21 @@ class Oled {
 
       display.display();
     }
+
+    void drawString(String str, uint8_t textSize) {
+      display.clearDisplay();
+
+      display.setTextSize(textSize);      // Normal 1:1 pixel scale
+      display.setTextColor(SSD1306_WHITE); // Draw white text
+      display.setCursor(0, 0);     // Start at top-left corner
+      display.cp437(true);         // Use full 256 char 'Code Page 437' font
+
+      for (int i = 0, l = str.length(); i < l; i++) {
+        display.write(str[i]);
+      }
+
+      display.display();
+    }
 };
 
 #endif

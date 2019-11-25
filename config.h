@@ -26,4 +26,10 @@
 //Switch
 #define SW_1 34
 #define SW_2 35
+
+//Flash Memory
+#define EEPROM_SIZE 512
+#define FOUND_ADD 0
+#define NOTFOUND_ADD 16
+#define THRESHOLD_ADD 32
 #endif
