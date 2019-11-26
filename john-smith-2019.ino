@@ -14,8 +14,8 @@
 #define SENSOR_RIGHT_SIDE analogRead(SENSOR_3)
 #define SENSOR_RIGHT_FRONT analogRead(SENSOR_4)
 
-#define ROW 16
-#define COL 16
+#define ROW 6//16
+#define COL 6//16
 
 #define MAX_MODE 12
 
@@ -27,6 +27,7 @@
    -no level shifter
    -no free wheeling diode
    -SD card, ship EEPROM
+   -Read battery
 */
 
 
@@ -61,7 +62,8 @@ uint8_t verticalWalls[ROW][COL + 1];
 uint8_t horizontalWalls[ROW + 1][COL];
 uint8_t startY = 5;//15
 uint8_t startX = 0;//0
-uint8_t endPoints[4][2] = {{3, 2}, {3, 3}, {4, 2}, {4, 3}}; //{7,8},{7,9},{8,8},{8,9}
+//y,x
+uint8_t endPoints[4][2] = {{3, 3}, {3, 4}, {4, 3}, {4, 4}}; //{7,8},{7,9},{8,8},{8,9}
 
 struct Block {
   uint8_t y;
@@ -74,8 +76,8 @@ struct Block {
 Block blocks[ROW][COL];
 
 //current position of robot
-uint8_t px = 5;
-uint8_t py = 0;
+uint8_t py = startY;
+uint8_t px = startX;
 char direction = 'N';
 
 void setup() {
@@ -99,6 +101,7 @@ void setup() {
   pinMode(SW_2, INPUT);
 
   readFlashMem();
+  initialBlock();
 
   oled.drawString("John Smith");
   delay(1000);
@@ -126,6 +129,7 @@ void loop() {
       //Wait until release switch.
       while (SW1_PUSHED);
       if (_mode == 0) {
+        oled.drawString("show state");
         delay(1000);
         LED_ON;
         while (true) {
@@ -155,6 +159,7 @@ void loop() {
           oled.drawString("LS: " + String(SENSOR_LEFT_SIDE) + "\n" + "LF: " + String(SENSOR_LEFT_FRONT) + "\n" + "RF: " + String(SENSOR_RIGHT_FRONT) + "\n" + "RS: " + String(SENSOR_RIGHT_SIDE) );
         }
         LED_OFF;
+        oled.drawString("Mode 1");
       }
       else if (_mode == 2) {
         oled.drawString("calibrate\nsensors");
@@ -233,22 +238,35 @@ void loop() {
         LED_OFF;
       }
       else if (_mode == 3) {
+        oled.drawString("mapping");
         delay(1000);
-        turnLeft();
+        LED_ON;
+        mapping();
+        LED_OFF;
       }
       else if (_mode == 4) {
+        oled.drawString("turnLeftFordward");
         delay(1000);
-        mapping();
+        LED_ON;
+        turnLeftForward();
+        LED_OFF;
+        oled.drawString("Mode 4");
       }
       else if (_mode == 5) {
+        oled.drawString("trackForward");
         delay(1000);
         LED_ON;
         trackForward();
         LED_OFF;
+        oled.drawString("Mode 5");
       }
       else if (_mode == 6) {
+        oled.drawString("turnRightFordward");
         delay(1000);
+        LED_ON;
         turnRightForward();
+        LED_OFF;
+        oled.drawString("Mode 6");
       }
       else if (_mode == 7) {
         delay(1000);
@@ -306,6 +324,10 @@ void readFlashMem() {
   tRightSide = EEPROM_read_int(THRESHOLD_ADD + (3 * 4));
 }
 
+/***
+   Read/Write EPROM
+   By AJ.SOMSIN
+*/
 void EEPROM_write_int(int _addr, int _data) {
   EEPROM.write(_addr + 0 , (_data >> 0) & 0x000000FF);
   EEPROM.write(_addr + 1 , (_data >> 8) & 0x000000FF);
@@ -317,7 +339,6 @@ void EEPROM_write_int(int _addr, int _data) {
 int EEPROM_read_int(int _addr) {
   int _data = 0x00000000;
   _data = (EEPROM.read(_addr + 0) << 0) | (EEPROM.read(_addr + 1) << 8) | (EEPROM.read(_addr + 2) << 16) | (EEPROM.read(_addr + 3) << 24);
-  Serial.println(_data);
   return _data;
 }
 
@@ -362,7 +383,7 @@ void trackForward(int stepCount) {
     //    }
     if (SENSOR_LEFT_SIDE < found[0] && SENSOR_LEFT_SIDE < notFound[0] - (notFound[0] * (10 / 100))) {
       spdLeft = 60;
-      spdRight = 60 - 10;
+      spdRight = 60 - 15;
       oled.drawString("left");
     }
     else if (SENSOR_RIGHT_SIDE < found[3] && SENSOR_RIGHT_SIDE < notFound[3] - (notFound[3] * (10 / 100))) {
@@ -373,8 +394,8 @@ void trackForward(int stepCount) {
     else {
       spdLeft = 60;
       spdRight = 60;
+      oled.drawString("forward");
     }
-
     if (motorL.getCount() > motorR.getCount()) {
       motorL.forward(spdLeft - 10);
     }
@@ -390,26 +411,44 @@ void trackForward(int stepCount) {
   }
   motorL.stop();
   motorR.stop();
-}
-
-void trackFrontWallForward() {
-  oled.drawString("t f wall");
-  while (SENSOR_LEFT_FRONT > tLeftFront - 100 && SENSOR_RIGHT_FRONT - 100 > tRightFront) {
-    oled.drawString("wall");
-    //    forward(5);
-  }
+  //  Serial.print("py: ");
+  //  Serial.print(py);
+  //  Serial.print("\tpx: ");
+  //  Serial.println(px);
+  changePosition();
 }
 
 void turnRightForward() {
-  forward(50);
+  forward(60);
   turnRight();
-  trackFrontWallForward();
+  forward(150);
+  changePosition();
 }
 
 void turnLeftForward() {
-  forward(50);
+  forward(60);
   turnLeft();
-  trackFrontWallForward();
+  forward(150);
+  changePosition();
+}
+
+void changePosition() {
+  if (direction == 'N') py--;
+  else if (direction == 'E') px++;
+  else if (direction == 'S') py++;
+  else px--;
+
+  oled.drawString("py: " + String(py) + "\npx: " + String(px));
+}
+
+void trackFrontWallForward() {
+  /*
+    oled.drawString("t f wall");
+    while (SENSOR_LEFT_FRONT > tLeftFront - 100 && SENSOR_RIGHT_FRONT - 100 > tRightFront) {
+    oled.drawString("wall");
+    //    forward(5);
+    }
+  */
 }
 
 void forward(int stepCount) {
@@ -432,6 +471,32 @@ void forward(int stepCount) {
     }
     else {
       motorR.forward(spd);
+    }
+  }
+  motorL.stop();
+  motorR.stop();
+}
+
+void backward(int stepCount) {
+  uint8_t spd = 60;
+  motorL.setCount(0);
+  motorR.setCount(0);
+  motorL.backward(spd);
+  motorR.backward(spd);
+
+  while (abs(motorL.getCount()) < stepCount && abs(motorR.getCount()) < stepCount) {
+
+    if (abs(motorL.getCount()) > abs(motorR.getCount())) {
+      motorL.stop();
+    }
+    else {
+      motorL.backward(spd);
+    }
+    if (abs(motorR.getCount()) > abs(motorL.getCount())) {
+      motorR.stop();
+    }
+    else {
+      motorR.backward(spd);
     }
   }
   motorL.stop();
@@ -462,6 +527,10 @@ void turnRight() {
   }
   motorL.stop();
   motorR.stop();
+  if (direction == 'N')direction = 'E';
+  else if (direction == 'E') direction = 'S';
+  else if (direction == 'S') direction = 'W';
+  else direction = 'N';
 }
 
 void turnLeft() {
@@ -488,21 +557,31 @@ void turnLeft() {
   }
   motorL.stop();
   motorR.stop();
+  
+  if (direction == 'N')direction = 'W';
+  else if (direction == 'E') direction = 'N';
+  else if (direction == 'S') direction = 'E';
+  else direction = 'S';
 }
 
 void turnAround() {
   forward(50);
   turnRight();
   turnRight();
+  backward(65);
 }
 
 void mapping() {
   bool foundTarget[4] = {false, false, false, false};
 
   while (!foundTarget[0] && !foundTarget[1] && !foundTarget[2] && !foundTarget[3]) {
+    for (int i = 0; i < 4; i++) {
+      foundTarget[i] = endPoints[i][0] == py && endPoints[i][1] == px;
+    }
     decistionFindTarget();
     resetBlockValue();
     floodFill();
+    delay(1000);
   }
 }
 
@@ -630,47 +709,83 @@ void chooseBlock(bool sf[], Block * left, Block * front, Block * right) {
   //b[][0] = y
   //b[][1] = x
   if (direction == 'N') {
-    if (sf[0]) {
+    if (sf[0] && px - 1 >= 0) {
       *left = blocks[py][px - 1];
     }
-    if (sf[1]) {
+    else {
+      sf[0] = false;
+    }
+    if (sf[1] && py - 1 >= 0) {
       *front = blocks[py - 1][px];
     }
-    if (sf[2]) {
+    else {
+      sf[1] = false;
+    }
+    if (sf[2] && px + 1 < COL) {
       *right = blocks[py][px + 1];
+    }
+    else {
+      sf[2] = false;
     }
   }
   if (direction == 'E') {
-    if (sf[0]) {
+    if (sf[0] && py - 1 >= 0) {
       *left = blocks[py - 1][px];
     }
-    if (sf[1]) {
+    else {
+      sf[0] = false;
+    }
+    if (sf[1] && px + 1 < COL) {
       *front = blocks[py][px + 1];
     }
-    if (sf[2]) {
+    else {
+      sf[1] = false;
+    }
+    if (sf[2] && py + 1 < ROW) {
       *right = blocks[py + 1][px];
+    }
+    else {
+      sf[2] = false;
     }
   }
   if (direction == 'S') {
-    if (sf[0]) {
+    if (sf[0] && px + 1 < ROW) {
       *left = blocks[py][px + 1];
     }
-    if (sf[1]) {
+    else {
+      sf[0] = false;
+    }
+    if (sf[1] && py + 1 < COL) {
       *front = blocks[py + 1][px];
     }
-    if (sf[2]) {
+    else {
+      sf[1] = false;
+    }
+    if (sf[2] && px - 1 >= 0) {
       *right = blocks[py][px - 1];
+    }
+    else {
+      sf[2] = false;
     }
   }
   if (direction == 'W') {
-    if (sf[0]) {
+    if (sf[0] && py + 1 < ROW) {
       *left = blocks[py + 1][px];
     }
-    if (sf[1]) {
+    else {
+      sf[0] = false;
+    }
+    if (sf[1] && px - 1 >= 0) {
       *front = blocks[py][px - 1];
     }
-    if (sf[2]) {
+    else {
+      sf[1] = false;
+    }
+    if (sf[2] && py - 1 >= 0) {
       *right = blocks[py - 1][px];
+    }
+    else {
+      sf[2] = false;
     }
   }
 }
@@ -699,27 +814,29 @@ void decistionFindTarget() {
   if (state == 0) {
     chooseBlock(sf, &left, &front, &right);
     //front
-    if (front.flag == false && front.mark == false)
+    if (sf[1] && front.flag == false && front.mark == false)
       trackForward();
     //right
-    else if (right.flag == false && right.mark == false)
+    else if (sf[2] && right.flag == false && right.mark == false)
       turnRightForward();
     //left
-    else if (left.flag == false && left.mark == false)
+    else if (sf[0] && left.flag == false && left.mark == false)
       turnLeftForward();
-    else if (over && front.count <= right.count && front.count <= left.count)
+    else if (over && sf[0] && sf[1] && sf[2] && front.count <= right.count && front.count <= left.count)
       trackForward();
-    else if (over && right.count <= front.count && right.count <= left.count)
+    else if (over && sf[0] && sf[1] && sf[2] && right.count <= front.count && right.count <= left.count)
       turnRightForward();
-    else if (over && left.count <= front.count && left.count <= right.count)
+    else if (over && sf[0] && sf[1] && sf[2] && left.count <= front.count && left.count <= right.count)
       turnLeftForward();
-    else if (front.value <= right.value && front.value <= left.value)
+    else if (sf[0] && sf[1] && sf[2] && front.value <= right.value && front.value <= left.value)
       trackForward();
-    else if (right.value <= front.value && right.value <= left.value)
+    else if (sf[0] && sf[1] && sf[2] && right.value <= front.value && right.value <= left.value)
       turnRightForward();
     else
       turnLeftForward();
   }
+
+
   //1 2-Way
   else if (state == 1) {
     //compare potential between front and right
