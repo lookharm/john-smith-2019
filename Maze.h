@@ -1,7 +1,6 @@
 #ifndef MAZE_H
 #define MAZE_H
 
-
 class Maze
 {
   public:
@@ -13,9 +12,6 @@ class Maze
 
     Maze() {}
     ~Maze() {}
-
-
-
 };
 
 #endif

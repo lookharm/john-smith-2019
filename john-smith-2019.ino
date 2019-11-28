@@ -2,30 +2,23 @@
 #include <Adafruit_NeoPixel.h>
 #include "EEPROM.h"
 #include "config.h"
+#include "helper.h"
 #include "Oled.h"
 #include "Motor.h"
 
-#define LED_ON digitalWrite(LED_IR, HIGH)
-#define LED_OFF digitalWrite(LED_IR, LOW)
-#define SW1_PUSHED !digitalRead(SW_1)
-#define SW2_PUSHED !digitalRead(SW_2)
-#define SENSOR_LEFT_FRONT analogRead(SENSOR_1)
-#define SENSOR_LEFT_SIDE analogRead(SENSOR_2)
-#define SENSOR_RIGHT_SIDE analogRead(SENSOR_3)
-#define SENSOR_RIGHT_FRONT analogRead(SENSOR_4)
-
+//field
 #define ROW 6//16
 #define COL 6//16
-
+//mode
 #define MAX_MODE 12
 
 /***
    TODO
    -acc sigmoid
    -slide side infared
-   -no switch debounce
-   -no level shifter
-   -no free wheeling diode
+   -add switch debounce
+   -add level shifter
+   -add free wheeling diode
    -SD card, ship EEPROM
    -Read battery
 */
@@ -43,6 +36,16 @@ Oled oled;
 Motor motorR;
 Motor motorL;
 
+//robot
+uint8_t step1Block = 215;//7.7 V
+uint8_t startY = 5;//15
+uint8_t startX = 0;//0
+char startDirection = 'N';
+uint8_t endPoints[4][2] = {{0, 1}, {0, 2}, {1, 1}, {1, 2}}; //{7,8},{7,9},{8,8},{8,9}//y,x
+//current position of robot
+uint8_t py = startY;
+uint8_t px = startX;
+char direction = startDirection;
 //Sensors
 String sName[4] = {"LS", "LF", "RF", "RS"};
 int found[4] = {};
@@ -55,17 +58,18 @@ int tLeftSide = 0;
 int tLeftFront = 0;
 int tRightFront = 0;
 int tRightSide = 0;
+//mode
+uint8_t mode = 0;
+String modeName[MAX_MODE] = {
+  "Calibrate sensor", "Show state", "Mapping", "ShortestPath",
+  "turnLeftFordward", "trackForward", "turnRightFordward",
+  "", "", "", "", ""
+};
 
-uint8_t step1Block = 215;// 7.7 V
-uint8_t _mode = 0;
+//walls
 bool verticalWalls[ROW][COL + 1];
 bool horizontalWalls[ROW + 1][COL];
-uint8_t startY = 0;//15
-uint8_t startX = 0;//0
-char startDirection = 'E';
-//y,x
-uint8_t endPoints[4][2] = {{3, 3}, {3, 4}, {4, 3}, {4, 4}}; //{7,8},{7,9},{8,8},{8,9}
-
+//block
 struct Block {
   uint8_t y;
   uint8_t x;
@@ -76,23 +80,12 @@ struct Block {
 };
 Block blocks[ROW][COL];
 
-//current position of robot
-uint8_t py = startY;
-uint8_t px = startX;
-char direction = startDirection;
-
 void setup() {
   Serial.begin(115200);
 
   EEPROM.begin(EEPROM_SIZE);
   pixels.begin();
   pixels.clear();
-
-  //  pixels.setPixelColor(0, pixels.Color(0, 0, 0));
-  //  pixels.setPixelColor(1, pixels.Color(0, 255, 0));
-  //  pixels.setPixelColor(2, pixels.Color(0, 0, 255));
-  //  pixels.setBrightness(5);
-  //  pixels.show();
 
   oled.init();
   motorR.init(MOTOR_R_INA, MOTOR_R_INB, MOTOR_R_OUTA, MOTOR_R_OUTB, MOTOR_R_CA, MOTOR_R_CB);
@@ -112,14 +105,14 @@ void setup() {
   initialBlock();
   initialWalls();
 
-  printWalls();
-
   oled.drawString("John Smith");
   delay(1000);
-  oled.drawString("Mode 0");
+  oled.drawString("Mode " + String(mode) + "\n" + modeName[mode], 1);
 }
 
 void loop() {
+
+
   //select mode
   if (SW1_PUSHED) {
     //Debouncing, wait 15 us.
@@ -127,9 +120,9 @@ void loop() {
     if (SW1_PUSHED) {
       //Wait until release switch.
       while (SW1_PUSHED);
-      _mode++;
-      _mode %= MAX_MODE;
-      oled.drawString("Mode " + String(_mode));
+      mode++;
+      mode %= MAX_MODE;
+      oled.drawString("Mode " + String(mode) + "\n" + modeName[mode], 1);
     }
   }
   //choose mode[Enter]
@@ -139,41 +132,8 @@ void loop() {
     if (SW2_PUSHED) {
       //Wait until release switch.
       while (SW1_PUSHED);
-      if (_mode == 0) {
-        oled.drawString("show state");
-        delay(1000);
-        LED_ON;
-        while (true) {
-          if (SW2_PUSHED) {
-            delayMicroseconds(15);
-            if (SW2_PUSHED) {
-              while (SW2_PUSHED);
-              oled.drawString("Mode 0");
-              break;
-            }
-          }
-          oled.drawString("State: " + String(getState()));
-        }
-        LED_OFF;
-      }
-      else if (_mode == 1) {
-        delay(1000);
-        LED_ON;
-        while (true) {
-          if (SW2_PUSHED) {
-            delayMicroseconds(15);
-            if (SW2_PUSHED) {
-              while (SW2_PUSHED);
-              break;
-            }
-          }
-          oled.drawString("LS: " + String(SENSOR_LEFT_SIDE) + "\n" + "LF: " + String(SENSOR_LEFT_FRONT) + "\n" + "RF: " + String(SENSOR_RIGHT_FRONT) + "\n" + "RS: " + String(SENSOR_RIGHT_SIDE) );
-        }
-        LED_OFF;
-        oled.drawString("Mode 1");
-      }
-      else if (_mode == 2) {
-        oled.drawString("calibrate\nsensors");
+      if (mode == 0) {
+        oled.drawString(modeName[mode]);
         delay(1000);
         LED_ON;
         int i = 0;
@@ -247,9 +207,27 @@ void loop() {
           }
         }
         LED_OFF;
+        oled.drawString("Mode " + String(mode) + "\n" + modeName[mode], 1);
       }
-      else if (_mode == 3) {
-        oled.drawString("mapping");
+      else if (mode == 1) {
+        oled.drawString(modeName[mode]);
+        delay(1000);
+        LED_ON;
+        while (true) {
+          if (SW2_PUSHED) {
+            delayMicroseconds(15);
+            if (SW2_PUSHED) {
+              while (SW2_PUSHED);
+              break;
+            }
+          }
+          oled.drawString("State: " + String(getState()));
+        }
+        LED_OFF;
+        oled.drawString("Mode " + String(mode) + "\n" + modeName[mode], 1);
+      }
+      else if (mode == 2) {
+        oled.drawString(modeName[mode]);
         delay(1000);
         LED_ON;
         mapping();
@@ -267,39 +245,41 @@ void loop() {
           }
         }
         LED_OFF;
+        oled.drawString("Mode " + String(mode) + "\n" + modeName[mode], 1);
       }
-      else if (_mode == 4) {
-        oled.drawString("turnLeftFordward");
+      else if (mode == 3) {
+        oled.drawString(modeName[mode]);
+        delay(1000);
+
+        oled.drawString("Mode " + String(mode) + "\n" + modeName[mode], 1);
+      }
+      else if (mode == 4) {
+        oled.drawString(modeName[mode]);
         delay(1000);
         LED_ON;
         turnLeftForward();
         LED_OFF;
-        oled.drawString("Mode 4");
+        oled.drawString("Mode " + String(mode) + "\n" + modeName[mode], 1);
       }
-      else if (_mode == 5) {
-        oled.drawString("trackForward");
+      else if (mode == 5) {
+        oled.drawString(modeName[mode]);
         delay(1000);
         LED_ON;
         trackForward();
         LED_OFF;
-        oled.drawString("Mode 5");
+        oled.drawString("Mode " + String(mode) + "\n" + modeName[mode], 1);
       }
-      else if (_mode == 6) {
-        oled.drawString("turnRightFordward");
+      else if (mode == 6) {
+        oled.drawString(modeName[mode]);
         delay(1000);
         LED_ON;
         turnRightForward();
         LED_OFF;
-        oled.drawString("Mode 6");
+        oled.drawString("Mode " + String(mode) + "\n" + modeName[mode], 1);
       }
-      else if (_mode == 7) {
-        delay(1000);
-        LED_ON;
-        turnLeftForward();
-        LED_OFF;
-        oled.drawString("Mode 7");
-      }
-      else if (_mode == 8) {
+      //empty
+      else if (mode == 7) {
+        oled.drawString(modeName[mode]);
         delay(1000);
         LED_ON;
         while (true) {
@@ -310,23 +290,39 @@ void loop() {
               break;
             }
           }
-          if (SENSOR_RIGHT_SIDE < found[3] - 900) {
-            oled.drawString(String(SENSOR_RIGHT_SIDE) + "\nA5 900");
+        }
+        LED_OFF;
+        oled.drawString("Mode " + String(mode) + "\n" + modeName[mode], 1);
+      }
+      else if (mode == 8) {
+        oled.drawString(modeName[mode]);
+        delay(1000);
+        LED_ON;
+        while (true) {
+          if (SW2_PUSHED) {
+            delayMicroseconds(15);
+            if (SW2_PUSHED) {
+              while (SW2_PUSHED);
+              break;
+            }
           }
-          else if (SENSOR_RIGHT_SIDE < found[3] - 800) {
-            oled.drawString(String(SENSOR_RIGHT_SIDE) + "\nA5 800");
+          if (SENSOR_RIGHT_SIDE < found[3] - 100) {
+            oled.drawString(String(SENSOR_RIGHT_SIDE) + "\nA5 100");
           }
-          else if (SENSOR_RIGHT_SIDE < found[3] - 600) {
-            oled.drawString(String(SENSOR_RIGHT_SIDE) + "\nA5 600");
+          else if (SENSOR_RIGHT_SIDE < found[3] - 200) {
+            oled.drawString(String(SENSOR_RIGHT_SIDE) + "\nA5 200");
           }
-          else if (SENSOR_RIGHT_SIDE < found[3] - 700) {
-            oled.drawString(String(SENSOR_RIGHT_SIDE) + "\nA5 700");
+          else if (SENSOR_RIGHT_SIDE < found[3] - 300) {
+            oled.drawString(String(SENSOR_RIGHT_SIDE) + "\nA5 300");
           }
-          else if (SENSOR_RIGHT_SIDE < found[3] - 800) {
-            oled.drawString(String(SENSOR_RIGHT_SIDE) + "\nA5 800");
+          else if (SENSOR_RIGHT_SIDE < found[3] - 400) {
+            oled.drawString(String(SENSOR_RIGHT_SIDE) + "\nA5 400");
           }
-          else if (SENSOR_RIGHT_SIDE < found[3] - 900) {
-            oled.drawString(String(SENSOR_RIGHT_SIDE) + "\nA5 900");
+          else if (SENSOR_RIGHT_SIDE < found[3] - 500) {
+            oled.drawString(String(SENSOR_RIGHT_SIDE) + "\nA5 500");
+          }
+          else if (SENSOR_RIGHT_SIDE < found[3] - 400) {
+            oled.drawString(String(SENSOR_RIGHT_SIDE) + "\nA5 400");
           }
           else if (SENSOR_RIGHT_SIDE > found[3] + 900) {
             oled.drawString(String(SENSOR_RIGHT_SIDE) + "\n5A 900");
@@ -357,9 +353,11 @@ void loop() {
           }
         }
         LED_OFF;
-        oled.drawString("Mode 8");
+        oled.drawString("Mode " + String(mode) + "\n" + modeName[mode], 1);
       }
-      else if (_mode == 9) {
+      //empty
+      else if (mode == 9) {
+        oled.drawString(modeName[mode]);
         delay(1000);
         LED_ON;
         while (true) {
@@ -370,18 +368,26 @@ void loop() {
               break;
             }
           }
-          for (int i = 100; i <= 1000; i += 100) {
-            if (SENSOR_RIGHT_SIDE < found[3] - i) {
-              oled.drawString(String(SENSOR_RIGHT_SIDE) + "\n" + "A5 " + String(i));
-            }
-          }
         }
         LED_OFF;
-        oled.drawString("Mode 9");
+        oled.drawString("Mode " + String(mode) + "\n" + modeName[mode], 1);
       }
-      else if (_mode == 10) {
+      else if (mode == 10) {
+        oled.drawString(modeName[mode]);
         delay(1000);
-        gotoTarget();
+        LED_ON;
+        while (true) {
+          if (SW2_PUSHED) {
+            delayMicroseconds(15);
+            if (SW2_PUSHED) {
+              while (SW2_PUSHED);
+              break;
+            }
+          }
+          oled.drawString("LS: " + String(SENSOR_LEFT_SIDE) + "\n" + "LF: " + String(SENSOR_LEFT_FRONT) + "\n" + "RF: " + String(SENSOR_RIGHT_FRONT) + "\n" + "RS: " + String(SENSOR_RIGHT_SIDE) );
+        }
+        LED_OFF;
+        oled.drawString("Mode " + String(mode) + "\n" + modeName[mode], 1);
       }
     }
   }
@@ -554,18 +560,8 @@ void changePosition() {
   else if (direction == 'E') px++;
   else if (direction == 'S') py++;
   else px--;
-
-  oled.drawString("py: " + String(py) + "\npx: " + String(px) + "\nv: " + blocks[py][px].value + "\nc: " + String(blocks[py][px].count) + "\nv: " + String(blocks[py][px].flag), 1);
-}
-
-void trackFrontWallForward() {
-  /*
-    oled.drawString("t f wall");
-    while (SENSOR_LEFT_FRONT > tLeftFront - 100 && SENSOR_RIGHT_FRONT - 100 > tRightFront) {
-    oled.drawString("wall");
-    //    forward(5);
-    }
-  */
+  oled.drawString("py: " + String(py) + "\npx: " + String(px));
+  //  oled.drawString("py: " + String(py) + "\npx: " + String(px) + "\nv: " + blocks[py][px].value + "\nc: " + String(blocks[py][px].count) + "\nv: " + String(blocks[py][px].flag), 1);
 }
 
 void forward(int stepCount) {
@@ -706,12 +702,12 @@ void mapping() {
   }
   floodFill();
   //go home
-  //  while (py != startY && px != startX) {
-  //    decistionFindHome();
-  //    resetBlockValue();
-  //    floodFill();
-  //    delay(1000);
-  //  }
+  while (py != startY && px != startX) {
+    decistionFindHome();
+    resetBlockValue();
+    floodFill();
+    delay(500);
+  }
 }
 
 void gotoTarget() {
@@ -836,7 +832,7 @@ void floodFill() {
     }
   }
 }
-
+//get state from sensors
 uint8_t getState() {
   uint8_t state = 0;
   switch (direction) {
@@ -900,7 +896,59 @@ uint8_t getState() {
 
   return state;
 }
+//get state from remember walls.
+uint8_t getStateFromWall() {
+  uint8_t state = 0;
+  switch (direction) {
+    case 'N':
+      if (verticalWalls[py][px]) {
+        state += 1;
+      }
+      if (horizontalWalls[py][px]) {
+        state += 2;
+      }
+      if (verticalWalls[py][px + 1]) {
+        state += 4;
+      }
+      break;
+    case 'E':
+      if (horizontalWalls[py][px]) {
+        state += 1;
+      }
+      if (verticalWalls[py][px + 1]) {
+        state += 2;
+      }
+      if (horizontalWalls[py + 1][px]) {
+        state += 4;
+      }
+      break;
+    case 'S':
+      if (verticalWalls[py][px + 1]) {
+        state += 1;
+      }
+      if (horizontalWalls[py + 1][px]) {
+        state += 2;
+      }
+      if (verticalWalls[py][px]) {
+        state += 4;
+      }
+      break;
+    case 'W':
+      if (horizontalWalls[py + 1][px]) {
+        state += 1;
+      }
+      if (verticalWalls[py][px]) {
+        state += 2;
+      }
+      if (verticalWalls[py][px]) {
+        state += 4;
+      }
+      break;
+  }
 
+  return state;
+}
+//choose 3 block from current position of robot, left block, front block and right block. 
 void chooseBlock(bool sf[], Block * left, Block * front, Block * right) {
   //sf = (left, front, right)
   //b[][0] = y
@@ -986,12 +1034,14 @@ void chooseBlock(bool sf[], Block * left, Block * front, Block * right) {
     }
   }
 }
-
+//find target in mapping phase.
 void decistionFindTarget() {
   if (blocks[py][px].flag) {
     blocks[py][px].count++;
   }
-  blocks[py][px].flag = true;
+  else {
+    blocks[py][px].flag = true;
+  }
 
   bool over = false;
   if (blocks[py][px].count > 4) {
@@ -1113,7 +1163,7 @@ void decistionFindTarget() {
     turnAround();
   }
 }
-
+//find home in mapping phase.
 void decistionFindHome() {
   if (blocks[py][px].flag) {
     blocks[py][px].count++;
@@ -1235,61 +1285,9 @@ void decistionFindHome() {
   }
 }
 
-uint8_t getState2() {
-  uint8_t state = 0;
-  switch (direction) {
-    case 'N':
-      if (verticalWalls[py][px]) {
-        state += 1;
-      }
-      if (horizontalWalls[py][px]) {
-        state += 2;
-      }
-      if (verticalWalls[py][px + 1]) {
-        state += 4;
-      }
-      break;
-    case 'E':
-      if (horizontalWalls[py][px]) {
-        state += 1;
-      }
-      if (verticalWalls[py][px + 1]) {
-        state += 2;
-      }
-      if (horizontalWalls[py + 1][px]) {
-        state += 4;
-      }
-      break;
-    case 'S':
-      if (verticalWalls[py][px + 1]) {
-        state += 1;
-      }
-      if (horizontalWalls[py + 1][px]) {
-        state += 2;
-      }
-      if (verticalWalls[py][px]) {
-        state += 4;
-      }
-      break;
-    case 'W':
-      if (horizontalWalls[py + 1][px]) {
-        state += 1;
-      }
-      if (verticalWalls[py][px]) {
-        state += 2;
-      }
-      if (verticalWalls[py][px]) {
-        state += 4;
-      }
-      break;
-  }
-
-  return state;
-}
-
 void decistionShortestPath() {
-  uint8_t state = getState2();
-  
+  uint8_t state = getStateFromWall();
+
   //  0 3-Way
   bool sf[3] = {true, true, true};
   //0:left, 1:front, 2:right
@@ -1305,8 +1303,6 @@ void decistionShortestPath() {
     else
       turnLeftForward();
   }
-
-
   //1 2-Way
   else if (state == 1) {
     //compare potential between front and right
