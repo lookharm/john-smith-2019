@@ -40,7 +40,7 @@ Motor motorL;
 uint8_t step1Block = 215;//7.7 V
 uint8_t startY = 5;//15
 uint8_t startX = 0;//0
-char startDirection = 'N';
+char startDirection = 'N';//N,E,S,W
 uint8_t endPoints[4][2] = {{0, 1}, {0, 2}, {1, 1}, {1, 2}}; //{7,8},{7,9},{8,8},{8,9}//y,x
 //current position of robot
 uint8_t py = startY;
@@ -542,16 +542,16 @@ void trackForward(int stepCount, int spd, bool c) {
 }
 
 void turnRightForward() {
-  trackForward(60, 60, false);
+  trackForward(50, 50, false);
   turnRight();
-  trackForward(150, 60, false);
+  trackForward(130, 50, false);
   changePosition();
 }
 
 void turnLeftForward() {
-  trackForward(60, 60, false);
+  trackForward(50, 50, false);
   turnLeft();
-  trackForward(150, 60, false);
+  trackForward(130, 50, false);
   changePosition();
 }
 
@@ -560,7 +560,7 @@ void changePosition() {
   else if (direction == 'E') px++;
   else if (direction == 'S') py++;
   else px--;
-  oled.drawString("py: " + String(py) + "\npx: " + String(px));
+  oled.drawString("py: " + String(py) + "\npx: " + String(px), 3);
   //  oled.drawString("py: " + String(py) + "\npx: " + String(px) + "\nv: " + blocks[py][px].value + "\nc: " + String(blocks[py][px].count) + "\nv: " + String(blocks[py][px].flag), 1);
 }
 
@@ -588,6 +588,15 @@ void forward(int stepCount) {
   }
   motorL.stop();
   motorR.stop();
+}
+
+void backwardDelay(int d) {
+  int8_t spd = 60;
+  motorL.setCount(0);
+  motorR.setCount(0);
+  motorL.backward(spd);
+  motorR.backward(spd);
+  delay(d);
 }
 
 void backward(int stepCount) {
@@ -681,10 +690,10 @@ void turnLeft() {
 }
 
 void turnAround() {
-  forward(50);
+  forward(45);
   turnRight();
   turnRight();
-  backward(75, 55);
+  backwardDelay(300);
 }
 
 void mapping() {
@@ -701,8 +710,21 @@ void mapping() {
     delay(500);
   }
   floodFill();
+
+  for (int i = 0; i < 4; i++) {
+    blocks[endPoints[i][0]][endPoints[i][1]].flag = true;
+  }
   //go home
-  while (py != startY && px != startX) {
+  trackForward();
+  delay(500);
+  turnAround();
+  delay(500);
+  trackForward();
+  delay(500);
+  trackForward();
+  delay(500);
+  
+  while (!(py == startY && px == startX)) {
     decistionFindHome();
     resetBlockValue();
     floodFill();
@@ -948,7 +970,7 @@ uint8_t getStateFromWall() {
 
   return state;
 }
-//choose 3 block from current position of robot, left block, front block and right block. 
+//choose 3 block from current position of robot, left block, front block and right block.
 void chooseBlock(bool sf[], Block * left, Block * front, Block * right) {
   //sf = (left, front, right)
   //b[][0] = y
