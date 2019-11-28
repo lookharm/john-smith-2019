@@ -79,6 +79,7 @@ struct Block {
   bool mark;
 };
 Block blocks[ROW][COL];
+String shortestPath;//f = forward, l = turn left, r = turn right
 
 void setup() {
   Serial.begin(115200);
@@ -101,7 +102,7 @@ void setup() {
   pinMode(SW_1, INPUT);
   pinMode(SW_2, INPUT);
 
-  readFlashMem();
+  readSensorThresholdFromFlash();
   initialBlock();
   initialWalls();
 
@@ -111,8 +112,6 @@ void setup() {
 }
 
 void loop() {
-
-
   //select mode
   if (SW1_PUSHED) {
     //Debouncing, wait 15 us.
@@ -233,25 +232,16 @@ void loop() {
         mapping();
         delay(500);
         oled.drawString("mapping done");
-        while (true) {
-          if (SW2_PUSHED) {
-            delayMicroseconds(15);
-            if (SW2_PUSHED) {
-              while (SW2_PUSHED);
-              delay(1000);
-              gotoTarget();
-              oled.drawString("A5", 3);
-            }
-          }
-        }
+        delay(500);
+        oled.drawString(shortestPath, 1);
         LED_OFF;
-        oled.drawString("Mode " + String(mode) + "\n" + modeName[mode], 1);
+        //oled.drawString("Mode " + String(mode) + "\n" + modeName[mode], 1);
       }
       else if (mode == 3) {
         oled.drawString(modeName[mode]);
         delay(1000);
-
-        oled.drawString("Mode " + String(mode) + "\n" + modeName[mode], 1);
+        gotoTarget();
+        oled.drawString("A5", 6);
       }
       else if (mode == 4) {
         oled.drawString(modeName[mode]);
@@ -393,7 +383,7 @@ void loop() {
   }
 }
 
-void readFlashMem() {
+void readSensorThresholdFromFlash() {
   for (int i = 0; i < 4; i++) {
     notFound[i] = EEPROM_read_int(NOTFOUND_ADD + (i * 4));
     found[i] = EEPROM_read_int(FOUND_ADD + (i * 4));
@@ -403,7 +393,25 @@ void readFlashMem() {
   tRightFront = EEPROM_read_int(THRESHOLD_ADD + (2 * 4));
   tRightSide = EEPROM_read_int(THRESHOLD_ADD + (3 * 4));
 }
-
+//write block value
+void writeShortestPathToFlash() {
+  uint8_t l = shortestPath.length();
+  EEPROM.write(SHORTEST_PATH_LEN, l);
+  for (int i = 0; i < l; i++) {
+    EEPROM.write(SHORTEST_PATH + i, shortestPath[i]);
+  }
+  EEPROM.commit();
+}
+//read block value
+void readShortestPathFromFlash() {
+  shortestPath = "";
+  uint8_t l = EEPROM.read(SHORTEST_PATH_LEN);
+  for (int i = 0; i < l; i++) {
+    shortestPath += char(EEPROM.read(SHORTEST_PATH + i));
+    oled.drawString(shortestPath, 1);
+    delay(100);
+  }
+}
 /***
    Read/Write EPROM
    By AJ.SOMSIN
@@ -597,10 +605,14 @@ void backwardDelay(int d) {
   motorL.backward(spd);
   motorR.backward(spd);
   delay(d);
+  motorR.stop();
+  motorL.stop();
 }
 
 void backward(int stepCount) {
   backward(stepCount, 60);
+  motorR.stop();
+  motorL.stop();
 }
 
 void backward(int stepCount, int spd) {
@@ -610,7 +622,6 @@ void backward(int stepCount, int spd) {
   motorR.backward(spd);
 
   while (abs(motorL.getCount()) < stepCount && abs(motorR.getCount()) < stepCount) {
-
     if (abs(motorL.getCount()) > abs(motorR.getCount())) {
       motorL.stop();
     }
@@ -635,7 +646,6 @@ void turnRight() {
   motorR.setCount(0);
   motorL.forward(spd);
   motorR.backward(spd);
-
   while (motorL.getCount() < m && abs(motorR.getCount()) < m) {
     if (motorL.getCount() > abs(motorR.getCount())) {
       motorL.stop();
@@ -665,7 +675,6 @@ void turnLeft() {
   motorR.setCount(0);
   motorL.backward(spd);
   motorR.forward(spd);
-
   while (abs(motorL.getCount()) < m && motorR.getCount() < m) {
     if (abs(motorL.getCount()) > motorR.getCount()) {
       motorL.stop();
@@ -682,7 +691,6 @@ void turnLeft() {
   }
   motorL.stop();
   motorR.stop();
-
   if (direction == 'N')direction = 'W';
   else if (direction == 'E') direction = 'N';
   else if (direction == 'S') direction = 'E';
@@ -698,10 +706,9 @@ void turnAround() {
 
 void mapping() {
   bool foundTarget[4] = {false, false, false, false};
-
   //find target
   while (!foundTarget[0] && !foundTarget[1] && !foundTarget[2] && !foundTarget[3]) {
-    decistionFindTarget();
+    decisionFindTarget();
     resetBlockValue();
     floodFill();
     for (int i = 0; i < 4; i++) {
@@ -710,10 +717,8 @@ void mapping() {
     delay(500);
   }
   floodFill();
+  for (int i = 0; i < 4; i++) blocks[endPoints[i][0]][endPoints[i][1]].flag = true;
 
-  for (int i = 0; i < 4; i++) {
-    blocks[endPoints[i][0]][endPoints[i][1]].flag = true;
-  }
   //go home
   trackForward();
   delay(500);
@@ -723,28 +728,47 @@ void mapping() {
   delay(500);
   trackForward();
   delay(500);
-  
+
   while (!(py == startY && px == startX)) {
-    decistionFindHome();
+    decisionFindHome();
     resetBlockValue();
     floodFill();
     delay(500);
   }
-}
 
-void gotoTarget() {
-  bool foundTarget[4] = {false, false, false, false};
-  direction = startDirection;
-  py = startY;
-  px = startX;
+  turnAround();
 
+  for (int i = 0; i < 4; i++) foundTarget[i] = false;
+
+  floodFill();
+
+  shortestPath = "";
   while (!foundTarget[0] && !foundTarget[1] && !foundTarget[2] && !foundTarget[3]) {
-    decistionShortestPath();
-    delay(500);
+    decisionShortestPath();
     for (int i = 0; i < 4; i++) {
       foundTarget[i] = endPoints[i][0] == py && endPoints[i][1] == px;
     }
+    //    delay(1000);
   }
+  writeShortestPathToFlash();
+}
+
+void gotoTarget() {
+  readShortestPathFromFlash();
+  LED_ON;
+  for (int i = 0; i < shortestPath.length(); i++) {
+    if (shortestPath[i] == 'f') {
+      trackForward();
+    }
+    else if (shortestPath[i] == 'r') {
+      turnRightForward();
+    }
+    else if (shortestPath[i] == 'l') {
+      turnLeftForward();
+    }
+    delay(500);
+  }
+  LED_OFF;
 }
 
 void initialWalls() {
@@ -976,88 +1000,40 @@ void chooseBlock(bool sf[], Block * left, Block * front, Block * right) {
   //b[][0] = y
   //b[][1] = x
   if (direction == 'N') {
-    if (sf[0] && px - 1 >= 0) {
-      *left = blocks[py][px - 1];
-    }
-    else {
-      sf[0] = false;
-    }
-    if (sf[1] && py - 1 >= 0) {
-      *front = blocks[py - 1][px];
-    }
-    else {
-      sf[1] = false;
-    }
-    if (sf[2] && px + 1 < COL) {
-      *right = blocks[py][px + 1];
-    }
-    else {
-      sf[2] = false;
-    }
+    if (sf[0] && px - 1 >= 0) *left = blocks[py][px - 1];
+    else sf[0] = false;
+    if (sf[1] && py - 1 >= 0) *front = blocks[py - 1][px];
+    else sf[1] = false;
+    if (sf[2] && px + 1 < COL) *right = blocks[py][px + 1];
+    else sf[2] = false;
   }
   if (direction == 'E') {
-    if (sf[0] && py - 1 >= 0) {
-      *left = blocks[py - 1][px];
-    }
-    else {
-      sf[0] = false;
-    }
-    if (sf[1] && px + 1 < COL) {
-      *front = blocks[py][px + 1];
-    }
-    else {
-      sf[1] = false;
-    }
-    if (sf[2] && py + 1 < ROW) {
-      *right = blocks[py + 1][px];
-    }
-    else {
-      sf[2] = false;
-    }
+    if (sf[0] && py - 1 >= 0) *left = blocks[py - 1][px];
+    else sf[0] = false;
+    if (sf[1] && px + 1 < COL) *front = blocks[py][px + 1];
+    else sf[1] = false;
+    if (sf[2] && py + 1 < ROW) *right = blocks[py + 1][px];
+    else sf[2] = false;
   }
   if (direction == 'S') {
-    if (sf[0] && px + 1 < ROW) {
-      *left = blocks[py][px + 1];
-    }
-    else {
-      sf[0] = false;
-    }
-    if (sf[1] && py + 1 < COL) {
-      *front = blocks[py + 1][px];
-    }
-    else {
-      sf[1] = false;
-    }
-    if (sf[2] && px - 1 >= 0) {
-      *right = blocks[py][px - 1];
-    }
-    else {
-      sf[2] = false;
-    }
+    if (sf[0] && px + 1 < ROW) *left = blocks[py][px + 1];
+    else sf[0] = false;
+    if (sf[1] && py + 1 < COL) *front = blocks[py + 1][px];
+    else sf[1] = false;
+    if (sf[2] && px - 1 >= 0) *right = blocks[py][px - 1];
+    else sf[2] = false;
   }
   if (direction == 'W') {
-    if (sf[0] && py + 1 < ROW) {
-      *left = blocks[py + 1][px];
-    }
-    else {
-      sf[0] = false;
-    }
-    if (sf[1] && px - 1 >= 0) {
-      *front = blocks[py][px - 1];
-    }
-    else {
-      sf[1] = false;
-    }
-    if (sf[2] && py - 1 >= 0) {
-      *right = blocks[py - 1][px];
-    }
-    else {
-      sf[2] = false;
-    }
+    if (sf[0] && py + 1 < ROW) *left = blocks[py + 1][px];
+    else sf[0] = false;
+    if (sf[1] && px - 1 >= 0) *front = blocks[py][px - 1];
+    else sf[1] = false;
+    if (sf[2] && py - 1 >= 0) *right = blocks[py - 1][px];
+    else sf[2] = false;
   }
 }
 //find target in mapping phase.
-void decistionFindTarget() {
+void decisionFindTarget() {
   if (blocks[py][px].flag) {
     blocks[py][px].count++;
   }
@@ -1186,7 +1162,7 @@ void decistionFindTarget() {
   }
 }
 //find home in mapping phase.
-void decistionFindHome() {
+void decisionFindHome() {
   if (blocks[py][px].flag) {
     blocks[py][px].count++;
   }
@@ -1307,72 +1283,93 @@ void decistionFindHome() {
   }
 }
 
-void decistionShortestPath() {
+void fw() {
+  shortestPath += 'f';
+  changePosition();
+}
+
+void rh() {
+  shortestPath += 'r';
+  if (direction == 'N')direction = 'E';
+  else if (direction == 'E') direction = 'S';
+  else if (direction == 'S') direction = 'W';
+  else direction = 'N';
+  changePosition();
+}
+
+void lf() {
+  shortestPath += 'l';
+  if (direction == 'N')direction = 'W';
+  else if (direction == 'E') direction = 'N';
+  else if (direction == 'S') direction = 'E';
+  else direction = 'S';
+  changePosition();
+}
+
+void decisionShortestPath() {
   uint8_t state = getStateFromWall();
 
-  //  0 3-Way
-  bool sf[3] = {true, true, true};
   //0:left, 1:front, 2:right
   //0: y, 1: x
   Block left, front, right;
-
+  bool sf[3] = {true, true, true};
   if (state == 0) {
     chooseBlock(sf, &left, &front, &right);
-    if (sf[0] && sf[1] && sf[2] && front.value <= right.value && front.value <= left.value)
-      trackForward();
-    else if (sf[0] && sf[1] && sf[2] && right.value <= front.value && right.value <= left.value)
-      turnRightForward();
-    else
-      turnLeftForward();
+    if (front.value <= right.value && front.value <= left.value) {
+      fw();
+    }
+    else if (right.value <= front.value && right.value <= left.value) {
+      rh();
+    }
+    else lf();
   }
   //1 2-Way
   else if (state == 1) {
-    //compare potential between front and right
     sf[0] = false;
+    //compare potential between front and right
     chooseBlock(sf, &left, &front, &right);
-
-    if (front.value <= right.value)
-      trackForward();
-    else
-      turnRightForward();
+    if (front.value <= right.value) {
+      fw();
+    }
+    else {
+      rh();
+    }
   }
   //2 2-Way
   else if (state == 2) {
-    //compare potential between left and right
     sf[1] = false;
+    //compare potential between left and right
     chooseBlock(sf, &left, &front, &right);
-
-    if (right.value <= left.value)
-      turnRightForward();
-    else
-      turnLeftForward();
+    if (right.value <= left.value) {
+      rh();
+    }
+    else {
+      lf();
+    }
   }
   //4 2-Way
   else if (state == 4) {
-    //compare potential between front and left
     sf[2] = false;
+    //compare potential between front and left
     chooseBlock(sf, &left, &front, &right);
-
-    if (front.value <= left.value)
-      trackForward();
-    else
-      turnLeftForward();
+    if (front.value <= left.value) {
+      fw();
+    }
+    else {
+      lf();
+    }
   }
   //3 1-Way
   else if (state == 3) {
-    turnRightForward();
+    rh();
   }
   //5 1-Way
   else if (state == 5) {
-    trackForward();
+    fw();
   }
   //6 1-Way
   else if (state == 6) {
-    turnLeftForward();
+    lf();
   }
-  //7 0-Way
-  else if (state == 7) {
-    blocks[py][px].mark = true;
-    turnAround();
-  }
+  //  oled.drawString(String(state) + "\n" + String(py) + ", " + String(px) + "\n" + String(left.value) + "," + String(front.value) + "," + String(right.value), 2);
 }

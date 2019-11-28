@@ -32,4 +32,6 @@
 #define FOUND_ADD 0
 #define NOTFOUND_ADD 16
 #define THRESHOLD_ADD 32
+#define SHORTEST_PATH_LEN 48
+#define SHORTEST_PATH 49
 #endif
