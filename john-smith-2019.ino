@@ -7,10 +7,10 @@
 #include "Motor.h"
 
 //field
-#define ROW 6//16
-#define COL 6//16
+#define ROW 9//16
+#define COL 9//16
 //mode
-#define MAX_MODE 12
+#define MAX_MODE 11
 
 /***
    TODO
@@ -26,9 +26,11 @@
 
 /***
    TODO FAST
-   -The God of Track Forward (1 block)
    -Trackforward Check front wall to stop.
-   -Turn Left, Turn Right
+   -Turn Left Forward, Turn Right Forward -> delay()
+   -Shortest Path 1, if found target. Shortest Path 2 if found home.
+   -set zero for turnLeftForward and turnRightForward if have wall.
+   -optimize code
 */
 
 Adafruit_NeoPixel pixels(3, 23, NEO_GRB + NEO_KHZ800);
@@ -38,10 +40,10 @@ Motor motorL;
 
 //robot
 uint8_t step1Block = 215;//7.7 V
-uint8_t startY = 5;//15
+uint8_t startY = 8;//15
 uint8_t startX = 0;//0
 char startDirection = 'N';//N,E,S,W
-uint8_t endPoints[4][2] = {{0, 1}, {0, 2}, {1, 1}, {1, 2}}; //{7,8},{7,9},{8,8},{8,9}//y,x
+uint8_t endPoints[4][2] = {{0, 7}, {0, 8}, {1, 7}, {1, 8}}; //{7,8},{7,9},{8,8},{8,9}//y,x
 //current position of robot
 uint8_t py = startY;
 uint8_t px = startX;
@@ -61,9 +63,10 @@ int tRightSide = 0;
 //mode
 uint8_t mode = 0;
 String modeName[MAX_MODE] = {
-  "Calibrate sensor", "Show state", "Mapping", "ShortestPath",
+  "Calibrate sensor", "Show state", "Mapping",
+  "ShortestPath 1", "ShortestPath 2", "ShortestPath 3",
   "turnLeftFordward", "trackForward", "turnRightFordward",
-  "", "", "", "", ""
+  "turnLeft", "turnRight"
 };
 
 //walls
@@ -79,7 +82,10 @@ struct Block {
   bool mark;
 };
 Block blocks[ROW][COL];
-String shortestPath;//f = forward, l = turn left, r = turn right
+//f = forward, l = turn left, r = turn right
+//first run after found target(only).
+//second run after found target and back home.
+String shortestPath = "";
 
 void setup() {
   Serial.begin(115200);
@@ -246,12 +252,24 @@ void loop() {
       else if (mode == 4) {
         oled.drawString(modeName[mode]);
         delay(1000);
+        gotoTarget();
+        oled.drawString("A5", 6);
+      }
+      else if (mode == 5) {
+        oled.drawString(modeName[mode]);
+        delay(1000);
+        gotoTarget();
+        oled.drawString("A5", 6);
+      }
+      else if (mode == 6) {
+        oled.drawString(modeName[mode]);
+        delay(1000);
         LED_ON;
         turnLeftForward();
         LED_OFF;
         oled.drawString("Mode " + String(mode) + "\n" + modeName[mode], 1);
       }
-      else if (mode == 5) {
+      else if (mode == 7) {
         oled.drawString(modeName[mode]);
         delay(1000);
         LED_ON;
@@ -259,7 +277,7 @@ void loop() {
         LED_OFF;
         oled.drawString("Mode " + String(mode) + "\n" + modeName[mode], 1);
       }
-      else if (mode == 6) {
+      else if (mode == 8) {
         oled.drawString(modeName[mode]);
         delay(1000);
         LED_ON;
@@ -267,24 +285,23 @@ void loop() {
         LED_OFF;
         oled.drawString("Mode " + String(mode) + "\n" + modeName[mode], 1);
       }
-      //empty
-      else if (mode == 7) {
+      else if (mode == 9) {
         oled.drawString(modeName[mode]);
         delay(1000);
         LED_ON;
-        while (true) {
-          if (SW2_PUSHED) {
-            delayMicroseconds(15);
-            if (SW2_PUSHED) {
-              while (SW2_PUSHED);
-              break;
-            }
-          }
-        }
+        turnLeft();
         LED_OFF;
         oled.drawString("Mode " + String(mode) + "\n" + modeName[mode], 1);
       }
-      else if (mode == 8) {
+      else if (mode == 10) {
+        oled.drawString(modeName[mode]);
+        delay(1000);
+        LED_ON;
+        turnRight();
+        LED_OFF;
+        oled.drawString("Mode " + String(mode) + "\n" + modeName[mode], 1);
+      }
+      else if (mode == 11) {
         oled.drawString(modeName[mode]);
         delay(1000);
         LED_ON;
@@ -346,7 +363,7 @@ void loop() {
         oled.drawString("Mode " + String(mode) + "\n" + modeName[mode], 1);
       }
       //empty
-      else if (mode == 9) {
+      else if (mode == 12) {
         oled.drawString(modeName[mode]);
         delay(1000);
         LED_ON;
@@ -362,7 +379,7 @@ void loop() {
         LED_OFF;
         oled.drawString("Mode " + String(mode) + "\n" + modeName[mode], 1);
       }
-      else if (mode == 10) {
+      else if (mode == 11) {
         oled.drawString(modeName[mode]);
         delay(1000);
         LED_ON;
@@ -550,16 +567,39 @@ void trackForward(int stepCount, int spd, bool c) {
 }
 
 void turnRightForward() {
-  trackForward(50, 50, false);
+  //trackForward(50, 50, false);
+  //change to forward delay.
+  forwardDelay(200);
   turnRight();
   trackForward(130, 50, false);
   changePosition();
 }
 
+void turnRightSetZeroForward() {
+  //change to forward delay.
+  forwardDelay(200);
+  turnRight();
+  backwardDelay(350);
+  trackForward(step1Block + step1Block * (20 / 100), 60, false);
+  changePosition();
+}
+
 void turnLeftForward() {
-  trackForward(50, 50, false);
+  //trackForward(50, 50, false);
+  //change to forward delay.
+  forwardDelay(200);
   turnLeft();
-  trackForward(130, 50, false);
+  backwardDelay(350);
+  //  trackForward(130, 50, false);
+  changePosition();
+}
+
+void turnLeftSetZeroForward() {
+  //change to forward delay.
+  forwardDelay(200);
+  turnLeft();
+  backwardDelay(350);
+  trackForward(step1Block + step1Block * (20 / 100), 60, false);
   changePosition();
 }
 
@@ -598,12 +638,12 @@ void forward(int stepCount) {
   motorR.stop();
 }
 
-void backwardDelay(int d) {
+void forwardDelay(int d) {
   int8_t spd = 60;
   motorL.setCount(0);
   motorR.setCount(0);
-  motorL.backward(spd);
-  motorR.backward(spd);
+  motorL.forward(spd);
+  motorR.forward(spd);
   delay(d);
   motorR.stop();
   motorL.stop();
@@ -611,6 +651,17 @@ void backwardDelay(int d) {
 
 void backward(int stepCount) {
   backward(stepCount, 60);
+  motorR.stop();
+  motorL.stop();
+}
+
+void backwardDelay(int d) {
+  int8_t spd = 60;
+  motorL.setCount(0);
+  motorR.setCount(0);
+  motorL.backward(spd);
+  motorR.backward(spd);
+  delay(d);
   motorR.stop();
   motorL.stop();
 }
@@ -701,10 +752,13 @@ void turnAround() {
   forward(45);
   turnRight();
   turnRight();
-  backwardDelay(300);
+  backwardDelay(350);
 }
-
+//mapping split into 2 phases, first find target and lastly find home.
 void mapping() {
+  py = startY;
+  px = startX;
+  direction = startDirection;
   bool foundTarget[4] = {false, false, false, false};
   //find target
   while (!foundTarget[0] && !foundTarget[1] && !foundTarget[2] && !foundTarget[3]) {
@@ -716,10 +770,12 @@ void mapping() {
     }
     delay(500);
   }
-  floodFill();
-  for (int i = 0; i < 4; i++) blocks[endPoints[i][0]][endPoints[i][1]].flag = true;
+  findShortestPath();
+  oled.drawString("Finding shortest-path phase 1 done.", 1);
+  delay(1000);
 
   //go home
+  for (int i = 0; i < 4; i++) blocks[endPoints[i][0]][endPoints[i][1]].flag = true;
   trackForward();
   delay(500);
   turnAround();
@@ -728,27 +784,26 @@ void mapping() {
   delay(500);
   trackForward();
   delay(500);
-
   while (!(py == startY && px == startX)) {
     decisionFindHome();
     resetBlockValue();
     floodFill();
     delay(500);
   }
-
   turnAround();
+  findShortestPath();
+  oled.drawString("Finding shortest-path phase 2 done.", 1);
+}
 
-  for (int i = 0; i < 4; i++) foundTarget[i] = false;
-
+void findShortestPath() {
   floodFill();
-
+  bool foundTarget[4] = {false, false, false, false};
   shortestPath = "";
   while (!foundTarget[0] && !foundTarget[1] && !foundTarget[2] && !foundTarget[3]) {
     decisionShortestPath();
     for (int i = 0; i < 4; i++) {
       foundTarget[i] = endPoints[i][0] == py && endPoints[i][1] == px;
     }
-    //    delay(1000);
   }
   writeShortestPathToFlash();
 }
@@ -1089,15 +1144,18 @@ void decisionFindTarget() {
     if (front.flag == false && front.mark == false)
       trackForward();
     else if (right.flag == false && right.mark == false)
-      turnRightForward();
+      //      turnRightForward();
+      turnRightSetZeroForward();
     else if (over && front.count <= right.count)
       trackForward();
     else if (over && right.count <= front.count)
-      turnRightForward();
+      //      turnRightForward();
+      turnRightSetZeroForward();
     else if (front.value <= right.value)
       trackForward();
     else
-      turnRightForward();
+      //      turnRightForward();
+      turnRightSetZeroForward();
   }
   //2 2-Way
   else if (state == 2) {
@@ -1107,17 +1165,23 @@ void decisionFindTarget() {
     chooseBlock(sf, &left, &front, &right);
 
     if (right.flag == false && right.mark == false)
-      turnRightForward();
+      //      turnRightForward();
+      turnRightSetZeroForward();
     else if (left.flag == false && left.mark == false)
-      turnLeftForward();
+      //      turnLeftForward();
+      turnLeftSetZeroForward();
     else if (over && right.count <= left.count)
-      turnRightForward();
+      //      turnRightForward();
+      turnRightSetZeroForward();
     else if (over && left.count <= right.count)
-      turnLeftForward();
+      //      turnLeftForward();
+      turnLeftSetZeroForward();
     else if (right.value <= left.value)
-      turnRightForward();
+      //      turnRightForward();
+      turnRightSetZeroForward();
     else
-      turnLeftForward();
+      //      turnLeftForward();
+      turnLeftSetZeroForward();
   }
   //4 2-Way
   else if (state == 4) {
@@ -1129,20 +1193,24 @@ void decisionFindTarget() {
     if (front.flag == false && front.mark == false)
       trackForward();
     else if (left.flag == false && left.mark == false)
-      turnLeftForward();
+      //      turnLeftForward();
+      turnLeftSetZeroForward();
     else if (over && front.count <= left.count)
       trackForward();
     else if (over && left.count <= front.count)
-      turnLeftForward();
+      //      turnLeftForward();
+      turnLeftSetZeroForward();
     else if (front.value <= left.value)
       trackForward();
     else
-      turnLeftForward();
+      //      turnLeftForward();
+      turnLeftSetZeroForward();
   }
   //3 1-Way
   else if (state == 3) {
     //    oled.drawString("L\nF\n");
-    turnRightForward();
+    //    turnRightForward();
+    turnRightSetZeroForward();
   }
   //5 1-Way
   else if (state == 5) {
@@ -1152,7 +1220,8 @@ void decisionFindTarget() {
   //6 1-Way
   else if (state == 6) {
     //    oled.drawString("\nF\nR");
-    turnLeftForward();
+    //    turnLeftForward();
+    turnLeftSetZeroForward();
   }
   //7 0-Way
   else if (state == 7) {
@@ -1216,15 +1285,18 @@ void decisionFindHome() {
     if (front.flag == false && front.mark == false)
       trackForward();
     else if (right.flag == false && right.mark == false)
-      turnRightForward();
+      //      turnRightForward();
+      turnRightSetZeroForward();
     else if (over && front.count <= right.count)
       trackForward();
     else if (over && right.count <= front.count)
-      turnRightForward();
+      //      turnRightForward();
+      turnRightSetZeroForward();
     else if (front.value >= right.value)
       trackForward();
     else
-      turnRightForward();
+      //      turnRightForward();
+      turnRightSetZeroForward();
   }
   //2 2-Way
   else if (state == 2) {
@@ -1233,17 +1305,23 @@ void decisionFindHome() {
     chooseBlock(sf, &left, &front, &right);
 
     if (right.flag == false && right.mark == false)
-      turnRightForward();
+      //      turnRightForward();
+      turnRightSetZeroForward();
     else if (left.flag == false && left.mark == false)
-      turnLeftForward();
+      //      turnLeftForward();
+      turnLeftSetZeroForward();
     else if (over && right.count <= left.count)
-      turnRightForward();
+      //      turnRightForward();
+      turnRightSetZeroForward();
     else if (over && left.count <= right.count)
-      turnLeftForward();
+      //      turnLeftForward();
+      turnLeftSetZeroForward();
     else if (right.value >= left.value)
-      turnRightForward();
+      //      turnRightForward();
+      turnRightSetZeroForward();
     else
-      turnLeftForward();
+      //      turnLeftForward();
+      turnLeftSetZeroForward();
   }
   //4 2-Way
   else if (state == 4) {
@@ -1254,19 +1332,23 @@ void decisionFindHome() {
     if (front.flag == false && front.mark == false)
       trackForward();
     else if (left.flag == false && left.mark == false)
-      turnLeftForward();
+      //      turnLeftForward();
+      turnLeftSetZeroForward();
     else if (over && front.count <= left.count)
       trackForward();
     else if (over && left.count <= front.count)
-      turnLeftForward();
+      //      turnLeftForward();
+      turnLeftSetZeroForward();
     else if (front.value >= left.value)
       trackForward();
     else
-      turnLeftForward();
+      //      turnLeftForward();
+      turnLeftSetZeroForward();
   }
   //3 1-Way
   else if (state == 3) {
-    turnRightForward();
+    //    turnRightForward();
+    turnRightSetZeroForward();
   }
   //5 1-Way
   else if (state == 5) {
@@ -1274,7 +1356,8 @@ void decisionFindHome() {
   }
   //6 1-Way
   else if (state == 6) {
-    turnLeftForward();
+    //    turnLeftForward();
+    turnLeftSetZeroForward();
   }
   //7 0-Way
   else if (state == 7) {
