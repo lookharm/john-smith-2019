@@ -34,4 +34,15 @@
 #define THRESHOLD_ADD 32
 #define SHORTEST_PATH_LEN 48
 #define SHORTEST_PATH 49
+
+//field
+#define ROW 5//16
+#define COL 5//16
+//robot
+#define STEP_ONE_BLOCK 215//7.7 V
+#define START_PY 0//15
+#define START_PX 0//0
+#define START_DIRECTION 'S'//N,E,S,W
+#define END_POINTS {{3, 0}, {3, 1}, {4, 0}, {4, 1}} //{7,8},{7,9},{8,8},{8,9}//y,x
+
 #endif

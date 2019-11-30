@@ -1,16 +1,15 @@
 #include <QueueArray.h>
 #include <Adafruit_NeoPixel.h>
-#include "EEPROM.h"
+
 #include "config.h"
 #include "helper.h"
+#include "EEPROM.h"
+#include "EEPROM_S.h"
 #include "Oled.h"
 #include "Motor.h"
 
-//field
-#define ROW 9//16
-#define COL 9//16
 //mode
-#define MAX_MODE 11
+#define MAX_MODE 12
 
 /***
    TODO
@@ -38,16 +37,12 @@ Oled oled;
 Motor motorR;
 Motor motorL;
 
-//robot
-uint8_t step1Block = 215;//7.7 V
-uint8_t startY = 8;//15
-uint8_t startX = 0;//0
-char startDirection = 'N';//N,E,S,W
-uint8_t endPoints[4][2] = {{0, 7}, {0, 8}, {1, 7}, {1, 8}}; //{7,8},{7,9},{8,8},{8,9}//y,x
+//field
+uint8_t endPoints[4][2] = END_POINTS; //{7,8},{7,9},{8,8},{8,9}//y,x
 //current position of robot
-uint8_t py = startY;
-uint8_t px = startX;
-char direction = startDirection;
+uint8_t py = START_PY;
+uint8_t px = START_PX;
+char direction = START_DIRECTION;
 //Sensors
 String sName[4] = {"LS", "LF", "RF", "RS"};
 int found[4] = {};
@@ -90,10 +85,10 @@ String shortestPath = "";
 void setup() {
   Serial.begin(115200);
 
-  EEPROM.begin(EEPROM_SIZE);
   pixels.begin();
   pixels.clear();
 
+  EEPROM_init(EEPROM_SIZE);
   oled.init();
   motorR.init(MOTOR_R_INA, MOTOR_R_INB, MOTOR_R_OUTA, MOTOR_R_OUTB, MOTOR_R_CA, MOTOR_R_CB);
   motorL.init(MOTOR_L_INA, MOTOR_L_INB, MOTOR_L_OUTA, MOTOR_L_OUTB, MOTOR_L_CA, MOTOR_L_CB);
@@ -246,19 +241,19 @@ void loop() {
       else if (mode == 3) {
         oled.drawString(modeName[mode]);
         delay(1000);
-        gotoTarget();
+        gotoTarget(500);
         oled.drawString("A5", 6);
       }
       else if (mode == 4) {
         oled.drawString(modeName[mode]);
         delay(1000);
-        gotoTarget();
+        gotoTarget(500);
         oled.drawString("A5", 6);
       }
       else if (mode == 5) {
         oled.drawString(modeName[mode]);
         delay(1000);
-        gotoTarget();
+        gotoTarget(0);
         oled.drawString("A5", 6);
       }
       else if (mode == 6) {
@@ -300,6 +295,12 @@ void loop() {
         turnRight();
         LED_OFF;
         oled.drawString("Mode " + String(mode) + "\n" + modeName[mode], 1);
+      }
+      else if (mode == 11) {
+        oled.drawString(modeName[mode]);
+        delay(1000);
+        findShortestPath();
+        oled.drawString(modeName[mode]);
       }
       else if (mode == 11) {
         oled.drawString(modeName[mode]);
@@ -429,23 +430,6 @@ void readShortestPathFromFlash() {
     delay(100);
   }
 }
-/***
-   Read/Write EPROM
-   By AJ.SOMSIN
-*/
-void EEPROM_write_int(int _addr, int _data) {
-  EEPROM.write(_addr + 0 , (_data >> 0) & 0x000000FF);
-  EEPROM.write(_addr + 1 , (_data >> 8) & 0x000000FF);
-  EEPROM.write(_addr + 2 , (_data >> 16) & 0x000000FF);
-  EEPROM.write(_addr + 3 , (_data >> 24) & 0x000000FF);
-  EEPROM.commit();
-}
-
-int EEPROM_read_int(int _addr) {
-  int _data = 0x00000000;
-  _data = (EEPROM.read(_addr + 0) << 0) | (EEPROM.read(_addr + 1) << 8) | (EEPROM.read(_addr + 2) << 16) | (EEPROM.read(_addr + 3) << 24);
-  return _data;
-}
 
 void sensorCalThreshold(float weightFound, float weightNotFound) {
   tLeftSide = (float(weightFound / 100) * found[0]) + (float(weightNotFound / 100) * notFound[0]);
@@ -453,15 +437,13 @@ void sensorCalThreshold(float weightFound, float weightNotFound) {
   tRightFront = (float(weightFound / 100) * found[2]) + (float(weightNotFound / 100) * notFound[2]);
   tRightSide = (float(weightFound / 100) * found[3]) + (float(weightNotFound / 100) * notFound[3]);
 
-  EEPROM_write_int(NOTFOUND_ADD , notFound[0]);
-  EEPROM_write_int(NOTFOUND_ADD + (4 * 1), notFound[1]);
-  EEPROM_write_int(NOTFOUND_ADD + (4 * 2), notFound[2]);
-  EEPROM_write_int(NOTFOUND_ADD + (4 * 3), notFound[3]);
+  for (int i = 0; i < 4; i++) {
+    EEPROM_write_int(NOTFOUND_ADD + (4 * i), notFound[i]);
+  }
 
-  EEPROM_write_int(FOUND_ADD, found[0]);
-  EEPROM_write_int(FOUND_ADD + (4 * 1), found[1]);
-  EEPROM_write_int(FOUND_ADD + (4 * 2), found[2]);
-  EEPROM_write_int(FOUND_ADD + (4 * 3), found[3]);
+  for (int i = 0; i < 4; i++) {
+    EEPROM_write_int(FOUND_ADD + (4 * i), found[i]);
+  }
 
   EEPROM_write_int(THRESHOLD_ADD, tLeftSide);
   EEPROM_write_int(THRESHOLD_ADD + (4 * 1), tLeftFront);
@@ -471,7 +453,7 @@ void sensorCalThreshold(float weightFound, float weightNotFound) {
 
 //Forward 1 block.
 void trackForward() {
-  trackForward(step1Block + step1Block * (20 / 100), 60, true);
+  trackForward(STEP_ONE_BLOCK + STEP_ONE_BLOCK * (20 / 100), 60, true);
 }
 
 void trackForward(int stepCount, int spd, bool c) {
@@ -568,7 +550,6 @@ void trackForward(int stepCount, int spd, bool c) {
 
 void turnRightForward() {
   //trackForward(50, 50, false);
-  //change to forward delay.
   forwardDelay(200);
   turnRight();
   trackForward(130, 50, false);
@@ -580,17 +561,15 @@ void turnRightSetZeroForward() {
   forwardDelay(200);
   turnRight();
   backwardDelay(350);
-  trackForward(step1Block + step1Block * (20 / 100), 60, false);
+  trackForward(STEP_ONE_BLOCK + STEP_ONE_BLOCK * (20 / 100), 60, false);
   changePosition();
 }
 
 void turnLeftForward() {
   //trackForward(50, 50, false);
-  //change to forward delay.
   forwardDelay(200);
   turnLeft();
-  backwardDelay(350);
-  //  trackForward(130, 50, false);
+  trackForward(130, 50, false);
   changePosition();
 }
 
@@ -598,8 +577,8 @@ void turnLeftSetZeroForward() {
   //change to forward delay.
   forwardDelay(200);
   turnLeft();
-  backwardDelay(350);
-  trackForward(step1Block + step1Block * (20 / 100), 60, false);
+  backwardDelay(400);
+  trackForward(STEP_ONE_BLOCK + STEP_ONE_BLOCK * (20 / 100), 60, false);
   changePosition();
 }
 
@@ -756,9 +735,9 @@ void turnAround() {
 }
 //mapping split into 2 phases, first find target and lastly find home.
 void mapping() {
-  py = startY;
-  px = startX;
-  direction = startDirection;
+  py = START_PY;
+  px = START_PX;
+  direction = START_DIRECTION;
   bool foundTarget[4] = {false, false, false, false};
   //find target
   while (!foundTarget[0] && !foundTarget[1] && !foundTarget[2] && !foundTarget[3]) {
@@ -770,12 +749,22 @@ void mapping() {
     }
     delay(500);
   }
+  for (int i = 0; i < 4; i++) blocks[endPoints[i][0]][endPoints[i][1]].flag = true;
+  //mem py px and direction, because findShortestPath() have to reset it.
+  uint8_t _py = py;
+  uint8_t _px = px;
+  char _direction = direction;
+
   findShortestPath();
   oled.drawString("Finding shortest-path phase 1 done.", 1);
-  delay(1000);
+  delay(1500);
+
+  //resotre py, px and direction
+  py = _py;
+  px = _px;
+  direction = _direction;
 
   //go home
-  for (int i = 0; i < 4; i++) blocks[endPoints[i][0]][endPoints[i][1]].flag = true;
   trackForward();
   delay(500);
   turnAround();
@@ -784,7 +773,7 @@ void mapping() {
   delay(500);
   trackForward();
   delay(500);
-  while (!(py == startY && px == startX)) {
+  while (!(py == START_PY && px == START_PX)) {
     decisionFindHome();
     resetBlockValue();
     floodFill();
@@ -793,10 +782,14 @@ void mapping() {
   turnAround();
   findShortestPath();
   oled.drawString("Finding shortest-path phase 2 done.", 1);
+  delay(1500);
 }
 
 void findShortestPath() {
   floodFill();
+  px = START_PX;
+  py = START_PY;
+  direction = START_DIRECTION;
   bool foundTarget[4] = {false, false, false, false};
   shortestPath = "";
   while (!foundTarget[0] && !foundTarget[1] && !foundTarget[2] && !foundTarget[3]) {
@@ -808,7 +801,7 @@ void findShortestPath() {
   writeShortestPathToFlash();
 }
 
-void gotoTarget() {
+void gotoTarget(int d) {
   readShortestPathFromFlash();
   LED_ON;
   for (int i = 0; i < shortestPath.length(); i++) {
@@ -821,7 +814,7 @@ void gotoTarget() {
     else if (shortestPath[i] == 'l') {
       turnLeftForward();
     }
-    delay(500);
+    delay(d);
   }
   LED_OFF;
 }
@@ -1165,23 +1158,17 @@ void decisionFindTarget() {
     chooseBlock(sf, &left, &front, &right);
 
     if (right.flag == false && right.mark == false)
-      //      turnRightForward();
-      turnRightSetZeroForward();
+      turnRightForward();
     else if (left.flag == false && left.mark == false)
-      //      turnLeftForward();
-      turnLeftSetZeroForward();
+      turnLeftForward();
     else if (over && right.count <= left.count)
-      //      turnRightForward();
-      turnRightSetZeroForward();
+      turnRightForward();
     else if (over && left.count <= right.count)
-      //      turnLeftForward();
-      turnLeftSetZeroForward();
+      turnLeftForward();
     else if (right.value <= left.value)
-      //      turnRightForward();
-      turnRightSetZeroForward();
+      turnRightForward();
     else
-      //      turnLeftForward();
-      turnLeftSetZeroForward();
+      turnLeftForward();
   }
   //4 2-Way
   else if (state == 4) {
@@ -1305,23 +1292,17 @@ void decisionFindHome() {
     chooseBlock(sf, &left, &front, &right);
 
     if (right.flag == false && right.mark == false)
-      //      turnRightForward();
-      turnRightSetZeroForward();
+      turnRightForward();
     else if (left.flag == false && left.mark == false)
-      //      turnLeftForward();
-      turnLeftSetZeroForward();
+      turnLeftForward();
     else if (over && right.count <= left.count)
-      //      turnRightForward();
-      turnRightSetZeroForward();
+      turnRightForward();
     else if (over && left.count <= right.count)
-      //      turnLeftForward();
-      turnLeftSetZeroForward();
+      turnLeftForward();
     else if (right.value >= left.value)
-      //      turnRightForward();
-      turnRightSetZeroForward();
+      turnRightForward();
     else
-      //      turnLeftForward();
-      turnLeftSetZeroForward();
+      turnLeftForward();
   }
   //4 2-Way
   else if (state == 4) {
