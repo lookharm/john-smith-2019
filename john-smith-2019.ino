@@ -236,24 +236,25 @@ void loop() {
         delay(500);
         oled.drawString(shortestPath, 1);
         LED_OFF;
+        oled.drawString(shortestPath);
         //oled.drawString("Mode " + String(mode) + "\n" + modeName[mode], 1);
       }
       else if (mode == 3) {
         oled.drawString(modeName[mode]);
         delay(1000);
-        gotoTarget(500);
+        gotoTarget(500, true);
         oled.drawString("A5", 6);
       }
       else if (mode == 4) {
         oled.drawString(modeName[mode]);
         delay(1000);
-        gotoTarget(500);
+        gotoTarget(250, true);
         oled.drawString("A5", 6);
       }
       else if (mode == 5) {
         oled.drawString(modeName[mode]);
         delay(1000);
-        gotoTarget(0);
+        gotoTarget(0, false);
         oled.drawString("A5", 6);
       }
       else if (mode == 6) {
@@ -296,12 +297,7 @@ void loop() {
         LED_OFF;
         oled.drawString("Mode " + String(mode) + "\n" + modeName[mode], 1);
       }
-      else if (mode == 11) {
-        oled.drawString(modeName[mode]);
-        delay(1000);
-        findShortestPath();
-        oled.drawString(modeName[mode]);
-      }
+      /*
       else if (mode == 11) {
         oled.drawString(modeName[mode]);
         delay(1000);
@@ -397,6 +393,7 @@ void loop() {
         LED_OFF;
         oled.drawString("Mode " + String(mode) + "\n" + modeName[mode], 1);
       }
+      */
     }
   }
 }
@@ -801,7 +798,7 @@ void findShortestPath() {
   writeShortestPathToFlash();
 }
 
-void gotoTarget(int d) {
+void gotoTarget(int d, bool backward) {
   readShortestPathFromFlash();
   LED_ON;
   for (int i = 0; i < shortestPath.length(); i++) {
@@ -809,9 +806,11 @@ void gotoTarget(int d) {
       trackForward();
     }
     else if (shortestPath[i] == 'r') {
-      turnRightForward();
+      if (backward) turnRightSetZeroForward();
+      else turnRightForward();
     }
     else if (shortestPath[i] == 'l') {
+      if (backward) turnLeftSetZeroForward();
       turnLeftForward();
     }
     delay(d);
